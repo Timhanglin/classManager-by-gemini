@@ -1,0 +1,7 @@
+{
+  "name": "EduSchedule Pro",
+  "description": "A high-performance course scheduling and management system featuring AI-driven conflict resolution and weekly planning visualizations.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
