@@ -1,0 +1,7 @@
+{
+  "name": "Copy of duSchedule Pro_V04上線版本_RWD mobile優化+模組化",
+  "description": "製作mobile優化以及代碼拆分模組化",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
