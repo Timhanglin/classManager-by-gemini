@@ -826,6 +826,9 @@ const app = {
             });
 
             const remaining = activeEnrollment ? (activeEnrollment.totalPurchased - activeEnrollment.used) : 0;
+            
+            // Initialize status filter
+            app.state.historyFilter.status = 'all';
 
             this.open(`
                 <div class="mb-6">
@@ -866,29 +869,53 @@ const app = {
                 <!-- Search Input -->
                 <div class="relative mb-4">
                     <i class="fa-solid fa-magnifying-glass absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"></i>
-                    <input type="text" placeholder="搜尋主題名稱或日期..." 
-                        oninput="app.modals.filterStudentHistory(this.value, '${studentId}', '${activeCatId}')"
+                    <input type="text" id="history-search-input" placeholder="搜尋主題名稱或日期..." 
+                        oninput="app.modals.filterStudentHistory(this.value, null, '${studentId}', '${activeCatId}')"
                         class="w-full pl-10 pr-4 py-3 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-indigo-100 text-sm font-bold text-slate-700">
                 </div>
 
+                <!-- Status Filters -->
+                <div class="flex gap-2 mb-4 overflow-x-auto pb-1 no-scrollbar">
+                    <button id="filter-btn-all" onclick="app.modals.filterStudentHistory(null, 'all', '${studentId}', '${activeCatId}')" class="flex-1 px-3 py-2 rounded-xl text-xs font-bold bg-slate-800 text-white shadow-md transition whitespace-nowrap">全部</button>
+                    <button id="filter-btn-attended" onclick="app.modals.filterStudentHistory(null, 'attended', '${studentId}', '${activeCatId}')" class="flex-1 px-3 py-2 rounded-xl text-xs font-bold bg-slate-100 text-slate-500 hover:bg-slate-200 transition whitespace-nowrap">出席</button>
+                    <button id="filter-btn-leave" onclick="app.modals.filterStudentHistory(null, 'leave', '${studentId}', '${activeCatId}')" class="flex-1 px-3 py-2 rounded-xl text-xs font-bold bg-slate-100 text-slate-500 hover:bg-slate-200 transition whitespace-nowrap">請假</button>
+                    <button id="filter-btn-absent" onclick="app.modals.filterStudentHistory(null, 'absent', '${studentId}', '${activeCatId}')" class="flex-1 px-3 py-2 rounded-xl text-xs font-bold bg-slate-100 text-slate-500 hover:bg-slate-200 transition whitespace-nowrap">缺席</button>
+                </div>
+
                 <!-- List Container -->
-                <div id="history-session-list" class="space-y-3 max-h-[50vh] overflow-y-auto pr-1"></div>
+                <div id="history-session-list" class="space-y-3 max-h-[45vh] overflow-y-auto pr-1"></div>
             `, 'max-w-xl');
 
             // Populate list initially with empty search
-            this.filterStudentHistory('', studentId, activeCatId);
+            this.filterStudentHistory('', 'all', studentId, activeCatId);
         },
 
-        filterStudentHistory(term, studentId, catId) {
+        filterStudentHistory(term = null, status = null, studentId, catId) {
             const container = document.getElementById('history-session-list');
+            const inputEl = document.getElementById('history-search-input');
             if(!container) return;
 
+            // 1. Determine current values. If argument is null, use current state/DOM
+            const currentTerm = term !== null ? term : (inputEl ? inputEl.value : '');
+            if(status) app.state.historyFilter.status = status;
+            const currentStatus = app.state.historyFilter.status || 'all';
+
+            // 2. Filter Logic
             let sessions = app.db.sessions
                 .filter(ses => ses.categoryId === catId)
                 .sort((a, b) => new Date(b.date) - new Date(a.date));
             
-            if(term) {
-                const lower = term.toLowerCase();
+            // Filter by Status
+            sessions = sessions.filter(ses => {
+                const rec = (ses.attendees || []).find(a => a.studentId === studentId);
+                const s = rec ? rec.status : 'none';
+                if (currentStatus === 'all') return true;
+                return s === currentStatus;
+            });
+
+            // Filter by Search Term
+            if(currentTerm) {
+                const lower = currentTerm.toLowerCase();
                 sessions = sessions.filter(s => {
                     const t = app.db.topics.find(top => top.id === s.topicId);
                     const name = t ? t.name : '';
@@ -896,14 +923,27 @@ const app = {
                 });
             }
 
+            // 3. Update Filter Buttons Visuals
+            ['all', 'attended', 'leave', 'absent'].forEach(key => {
+                const btn = document.getElementById(`filter-btn-${key}`);
+                if(btn) {
+                    if(key === currentStatus) {
+                        btn.className = "flex-1 px-3 py-2 rounded-xl text-xs font-bold bg-slate-800 text-white shadow-md transition whitespace-nowrap";
+                    } else {
+                        btn.className = "flex-1 px-3 py-2 rounded-xl text-xs font-bold bg-slate-100 text-slate-500 hover:bg-slate-200 transition whitespace-nowrap";
+                    }
+                }
+            });
+
+            // 4. Render List
             if(sessions.length === 0) {
-                container.innerHTML = '<div class="text-center text-slate-400 py-4">查無課程紀錄</div>';
+                container.innerHTML = '<div class="text-center text-slate-400 py-4">查無符合的課程紀錄</div>';
                 return;
             }
 
             container.innerHTML = sessions.map(ses => {
                 const rec = (ses.attendees || []).find(a => a.studentId === studentId);
-                const status = rec ? rec.status : 'none';
+                const statusStr = rec ? rec.status : 'none';
                 const isRescheduled = rec ? rec.isRescheduled : false;
                 const topic = app.db.topics.find(t => t.id === ses.topicId);
                 
@@ -912,9 +952,9 @@ const app = {
                     'leave': '<span class="bg-amber-100 text-amber-600 px-2 py-1 rounded text-xs font-bold">請假</span>',
                     'absent': '<span class="bg-rose-100 text-rose-600 px-2 py-1 rounded text-xs font-bold">缺席</span>',
                     'none': '<span class="bg-slate-100 text-slate-400 px-2 py-1 rounded text-xs font-bold">未點名</span>'
-                }[status];
+                }[statusStr];
 
-                const showRescheduleBtn = (status === 'leave' || status === 'absent');
+                const showRescheduleBtn = (statusStr === 'leave' || statusStr === 'absent');
 
                 return `
                     <div class="bg-white border border-slate-100 p-3 rounded-xl flex items-center justify-between shadow-sm">
@@ -1038,7 +1078,11 @@ const app = {
                      <h3 class="text-2xl font-bold text-slate-800">${dateStr}</h3>
                      <span class="bg-indigo-50 text-indigo-600 px-3 py-1 rounded-lg text-xs font-bold">${sessions.length} 堂課</span>
                 </div>
-                <div class="space-y-3 mb-8 max-h-64 overflow-y-auto no-scrollbar">
+                <!-- 
+                  Updated List Container: 
+                  Increased max-height to 60vh because the form is now collapsible, saving space.
+                -->
+                <div class="space-y-3 mb-4 max-h-[60vh] overflow-y-auto no-scrollbar">
                     ${sessions.length === 0 ? '<div class="text-center text-slate-400 py-4 bg-slate-50 rounded-2xl">今日無課程</div>' : ''}
                     ${sessions.map(s => {
                         const cat = app.db.categories.find(c => c.id === s.categoryId);
@@ -1053,30 +1097,44 @@ const app = {
                                     <p class="text-lg font-black text-slate-800 tracking-tight">${topic?.name || '無主題'}</p>
                                 </div>
                                 <div class="flex gap-2">
-                                    <button onclick="app.modals.openRollCall('${s.id}')" class="bg-emerald-50 text-emerald-600 px-3 py-2 rounded-xl text-xs font-bold hover:bg-emerald-100">點名</button>
-                                    <button onclick="app.modals.openEditSession('${s.id}')" class="bg-slate-100 text-slate-500 px-3 py-2 rounded-xl text-xs font-bold hover:bg-slate-200 hover:text-slate-700"><i class="fa-solid fa-pen"></i></button>
-                                    <button onclick="app.actions.deleteSession('${s.id}')" class="bg-rose-50 text-rose-500 px-3 py-2 rounded-xl text-xs font-bold hover:bg-rose-100"><i class="fa-solid fa-trash-can"></i></button>
+                                    <!-- 
+                                      Updated Buttons: 
+                                      Increased padding (px-3 py-2.5) and adjusted font size/icons for easier touch access.
+                                    -->
+                                    <button onclick="app.modals.openRollCall('${s.id}')" class="bg-emerald-50 text-emerald-600 px-3 py-2.5 rounded-xl text-sm font-bold hover:bg-emerald-100 flex items-center gap-1"><i class="fa-solid fa-check"></i> 點名</button>
+                                    <button onclick="app.modals.openEditSession('${s.id}')" class="bg-slate-100 text-slate-500 px-3 py-2.5 rounded-xl text-sm font-bold hover:bg-slate-200 hover:text-slate-700"><i class="fa-solid fa-pen"></i></button>
+                                    <button onclick="app.actions.deleteSession('${s.id}')" class="bg-rose-50 text-rose-500 px-3 py-2.5 rounded-xl text-sm font-bold hover:bg-rose-100"><i class="fa-solid fa-trash-can"></i></button>
                                 </div>
                             </div>
                         `;
                     }).join('')}
                 </div>
-                <div class="pt-6 border-t border-slate-100">
-                    <h4 class="font-bold text-slate-800 mb-4">安排新課程</h4>
-                    <form onsubmit="app.actions.addSession(event, '${dateStr}')">
-                        <div class="grid grid-cols-2 gap-3 mb-3">
-                            <select name="categoryId" required onchange="app.helpers.updateTopicSelect(this.value)" class="bg-slate-50 border border-slate-200 p-3 rounded-xl text-sm outline-none"><option value="">選擇類別...</option>${app.db.categories.map(c => `<option value="${c.id}">${c.name}</option>`).join('')}</select>
-                            <select id="topic-select" name="topicId" required class="bg-slate-50 border border-slate-200 p-3 rounded-xl text-sm outline-none"><option value="">先選類別</option></select>
-                        </div>
-                        <div class="grid grid-cols-2 gap-3 mb-4">
-                            <input type="time" name="time" value="14:00" required class="bg-slate-50 border border-slate-200 p-3 rounded-xl text-sm outline-none">
-                            <div><input type="number" name="repeat" value="1" min="1" max="12" placeholder="重複週數" class="w-full bg-slate-50 border border-slate-200 p-3 rounded-xl text-sm outline-none text-center"><div class="text-[10px] text-center text-slate-400 mt-1">重複週數 (1=僅本次)</div></div>
-                        </div>
-                        <button class="w-full py-3 bg-indigo-600 text-white font-bold rounded-xl shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition">加入排程</button>
-                    </form>
+                <!-- 
+                  Updated Footer: 
+                  Collapsible "Accordion" style for Adding New Session to save space.
+                -->
+                <div class="pt-4 border-t border-slate-100">
+                    <button onclick="document.getElementById('add-session-form').classList.toggle('hidden'); this.querySelector('.fa-chevron-down').classList.toggle('rotate-180');" class="w-full flex justify-between items-center text-left font-bold text-slate-800 hover:bg-slate-50 p-2 rounded-xl transition group">
+                        <span class="flex items-center gap-2"><i class="fa-solid fa-calendar-plus text-indigo-500"></i> 安排新課程</span>
+                        <i class="fa-solid fa-chevron-down transition-transform duration-300 text-slate-400 group-hover:text-slate-600"></i>
+                    </button>
+                    
+                    <div id="add-session-form" class="hidden mt-4 transition-all">
+                        <form onsubmit="app.actions.addSession(event, '${dateStr}')">
+                            <div class="grid grid-cols-2 gap-3 mb-3">
+                                <select name="categoryId" required onchange="app.helpers.updateTopicSelect(this.value)" class="bg-slate-50 border border-slate-200 p-3 rounded-xl text-sm outline-none"><option value="">選擇類別...</option>${app.db.categories.map(c => `<option value="${c.id}">${c.name}</option>`).join('')}</select>
+                                <select id="topic-select" name="topicId" required class="bg-slate-50 border border-slate-200 p-3 rounded-xl text-sm outline-none"><option value="">先選類別</option></select>
+                            </div>
+                            <div class="grid grid-cols-2 gap-3 mb-4">
+                                <input type="time" name="time" value="14:00" required class="bg-slate-50 border border-slate-200 p-3 rounded-xl text-sm outline-none">
+                                <div><input type="number" name="repeat" value="1" min="1" max="12" placeholder="重複週數" class="w-full bg-slate-50 border border-slate-200 p-3 rounded-xl text-sm outline-none text-center"><div class="text-[10px] text-center text-slate-400 mt-1">重複週數 (1=僅本次)</div></div>
+                            </div>
+                            <button class="w-full py-3 bg-indigo-600 text-white font-bold rounded-xl shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition">加入排程</button>
+                        </form>
+                    </div>
                 </div>
             `;
-            this.open(html);
+            this.open(html, 'max-w-4xl');
         },
         openEditSession(sessionId) {
             const session = app.db.sessions.find(s => s.id === sessionId);
@@ -1105,7 +1163,7 @@ const app = {
                 const status = record ? record.status : null;
                 html += `<div class="bg-slate-50 p-3 rounded-xl flex items-center justify-between"><span class="font-bold text-slate-700">${s.name}</span><div class="flex gap-1"><button onclick="app.actions.updateAttendance('${sessionId}', '${s.id}', 'attended')" class="px-3 py-1.5 rounded-lg text-xs font-bold transition ${status==='attended' ? 'bg-emerald-500 text-white shadow-md' : 'bg-white text-slate-400 border border-slate-200'}">到</button><button onclick="app.actions.updateAttendance('${sessionId}', '${s.id}', 'leave')" class="px-3 py-1.5 rounded-lg text-xs font-bold transition ${status==='leave' ? 'bg-amber-500 text-white shadow-md' : 'bg-white text-slate-400 border border-slate-200'}">假</button><button onclick="app.actions.updateAttendance('${sessionId}', '${s.id}', 'absent')" class="px-3 py-1.5 rounded-lg text-xs font-bold transition ${status==='absent' ? 'bg-rose-500 text-white shadow-md' : 'bg-white text-slate-400 border border-slate-200'}">缺</button></div></div>`;
             });
-            this.open(html + `</div>`);
+            this.open(html + `</div>`, 'max-w-4xl');
         },
         toggleRescheduled(sessionId, studentId, catId) {
             const session = app.db.sessions.find(s => s.id === sessionId);
